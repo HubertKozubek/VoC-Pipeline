@@ -1,0 +1,2 @@
+class BaseReviewProvider:
+    pass
