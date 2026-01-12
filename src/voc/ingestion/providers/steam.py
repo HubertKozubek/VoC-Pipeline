@@ -1,6 +1,5 @@
-import requests
+import httpx
 import logging
-import urllib.parse
 from typing import List, Optional, Any, Dict
 from datetime import datetime, timezone
 import time
@@ -15,7 +14,8 @@ class SteamReviewProvider(BaseReviewProvider):
         "language": "english",
         "num_per_page": 100,
         "filter": "recent",
-        "cursor": "*"
+        "cursor": "*",
+        "purchase_type": "all"
     }
 
     def __init__(self, app_id: str, params: dict | None = None):
@@ -25,20 +25,26 @@ class SteamReviewProvider(BaseReviewProvider):
     async def fetch_reviews(self, since: datetime | None = None) -> List[Review]:
         url = self.BASE_URL.format(appid=self.app_id)
         params = self.params.copy()
-        num_of_reviews_retrived = 100
+        
+        num_reviews_total = 0
 
-        while num_of_reviews_retrived != 0:
-            response = requests.get(url, params=params)
-            response.raise_for_status()
+        async with httpx.AsyncClient() as client:
+            while True:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
 
-            data = response.json()
-            reviews_data = data.get("reviews", [])
-            num_of_reviews_retrived = data["query_summary"]["num_reviews"]
+                data = response.json()
+                reviews_data = data.get("reviews", [])
+                
+                num_reviews_in_response = data.get("query_summary", {}).get("num_reviews", 0)
+                num_reviews_total += num_reviews_in_response
 
-            for r in reviews_data:
-                yield r
+                for r in reviews_data:
+                    yield r
 
-            cursor = urllib.parse.quote(data.get("cursor", ""))
-            params["cursor"] = cursor
-            
-            
+                if num_reviews_in_response == 0:
+                    break
+
+                cursor = data.get("cursor")
+                if cursor:
+                    params["cursor"] = cursor
