@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
+    "polars>=1.37.1",
     "prefect>=3.6.10",
 ]
 
