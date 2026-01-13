@@ -3,9 +3,38 @@ import logging
 from typing import List, Optional, Any, Dict
 from datetime import datetime, timezone
 import time
-from .provider import BaseReviewProvider, Review
+from .provider import BaseReviewProvider
 
 logger = logging.getLogger(__name__)
+
+from pydantic import BaseModel
+
+class SteamAuthor(BaseModel):
+    steamid: str
+    num_games_owned: int
+    num_reviews: int
+    playtime_forever: int
+    playtime_last_two_weeks: int
+    playtime_at_review: int
+    last_played: int
+
+class SteamReview(BaseModel):
+    recommendationid: str
+    author: SteamAuthor
+    language: str
+    review: str
+    timestamp_created: int
+    timestamp_updated: int
+    voted_up: bool
+    votes_up: int
+    votes_funny: int
+    weighted_vote_score: float
+    comment_count: int
+    steam_purchase: bool
+    received_for_free: bool
+    written_during_early_access: bool
+    primarily_steam_deck: bool
+    app_id: str
 
 class SteamReviewProvider(BaseReviewProvider):
     BASE_URL = "https://store.steampowered.com/appreviews/{appid}"
@@ -22,9 +51,11 @@ class SteamReviewProvider(BaseReviewProvider):
         self.app_id = app_id
         self.params = params or self.DEFAULT_PARAMETERS
 
-    async def fetch_reviews(self, since: datetime | None = None) -> List[Review]:
+    async def fetch_reviews(self, since: datetime | None = None) -> List[SteamReview]:
         url = self.BASE_URL.format(appid=self.app_id)
         params = self.params.copy()
+        if since and params.get("filter") != "recent":
+             logger.warning("Fetching reviews with 'since' parameter but filter is not 'recent'. Strict date breaking might be inaccurate.")
         
         num_reviews_total = 0
 
@@ -40,9 +71,22 @@ class SteamReviewProvider(BaseReviewProvider):
                 num_reviews_total += num_reviews_in_response
 
                 for r in reviews_data:
-                    yield r
+                    timestamp = datetime.fromtimestamp(r.get("timestamp_created", 0), tz=timezone.utc)
+                    
+                    if since and timestamp < since:
+                        logger.info(f"Found around {num_reviews_total} reviews in total.")
+                        logger.info(f"Found review older than {since}. Stopping.")
+                        return
+
+                    # Inject app_id and validate
+                    r["app_id"] = self.app_id
+                    try:
+                        yield SteamReview(**r)
+                    except Exception as e:
+                        logger.warning(f"Failed to parse review {r.get('recommendationid', 'unknown')}: {e}")
 
                 if num_reviews_in_response == 0:
+                    logger.info(f"Found {num_reviews_total} reviews in total.") 
                     break
 
                 cursor = data.get("cursor")
