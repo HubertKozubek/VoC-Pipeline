@@ -5,14 +5,20 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "bertopic[vision]>=0.17.4",
+    "hdbscan>=0.8.41",
     "httpx>=0.28.1",
     "nltk>=3.9.2",
     "polars>=1.37.1",
     "prefect>=3.6.10",
     "sentence-transformers>=5.2.2",
+    "umap-learn>=0.5.11",
 ]
 
 [dependency-groups]
 dev = [
+    "ipykernel>=7.1.0",
+    "ipywidgets>=8.1.8",
+    "jupyter>=1.1.1",
     "pre-commit>=4.5.0",
 ]

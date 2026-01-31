@@ -49,3 +49,23 @@ class ParquetStore:
         df.write_parquet(file_path)
         
         logger.info(f"Saved to {file_path}")
+
+    def load(self) -> List[Dict[str, Any]]:
+        target_dir = self.base_path / self.app_id
+        if not target_dir.exists():
+            logger.warning(f"Directory {target_dir} does not exist. Returning empty list.")
+            return []
+
+        files = list(target_dir.glob("*.parquet"))
+        if not files:
+            logger.info(f"No parquet files found in {target_dir}")
+            return []
+
+        logger.info(f"Loading {len(files)} parquet files from {target_dir}")
+        
+        try:
+            df = pl.read_parquet(target_dir / "*.parquet")
+            return df.to_dicts()
+        except Exception as e:
+            logger.error(f"Error loading parquet files: {e}")
+            return []
