@@ -6,8 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
+    "nltk>=3.9.2",
     "polars>=1.37.1",
     "prefect>=3.6.10",
+    "sentence-transformers>=5.2.2",
 ]
 
 [dependency-groups]
