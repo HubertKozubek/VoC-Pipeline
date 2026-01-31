@@ -1,17 +1,16 @@
 import asyncio
 from prefect import flow, task
+from prefect.logging import get_run_logger
 import httpx
 from datetime import datetime, timedelta
 from voc.storage.factory import get_storage
 from voc.storage.types import StorageType
 from voc.ingestion.providers.steam import SteamReviewProvider, SteamReview
-from voc.logging import get_logger
-
-logger = get_logger(__name__)
 
 
 @task(log_prints=True)
 async def fetch_steam_reviews(app_id: str, since: datetime | None = None):
+    logger = get_run_logger()
     provider = SteamReviewProvider(app_id=app_id)
     review_list = [r async for r in provider.fetch_reviews(since=since)]
     logger.info(f"Fetched {len(review_list)} reviews for app {app_id}")
@@ -20,6 +19,7 @@ async def fetch_steam_reviews(app_id: str, since: datetime | None = None):
 
 @task(log_prints=True)
 def save_reviews(reviews: list[SteamReview], app_id: str, storage_type: StorageType):
+    logger = get_run_logger()
     storage = get_storage(storage_type, app_id)
     storage.save_reviews(reviews)
     logger.info(f"Saved {len(reviews)} reviews for app {app_id}")
