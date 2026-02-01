@@ -48,41 +48,78 @@ def save_model(topic_model: BERTopic, app_id: str):
     logger.info("Model saved successfully")
 
 
+@task
+def train_model(
+    docs: list[str],
+    embeddings: np.ndarray,
+    umap_params: dict,
+    hdbscan_params: dict,
+    vectorizer_params: dict,
+) -> BERTopic:
+    logger = get_run_logger()
+    logger.info("Initializing and training BERTopic model...")
+
+    umap_model = UMAP(**umap_params)
+    hdbscan_model = HDBSCAN(**hdbscan_params)
+    vectorizer_model = CountVectorizer(**vectorizer_params)
+    ctfidf_model = ClassTfidfTransformer()
+    embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+    # Initialize BERTopic
+    topic_model = BERTopic(
+        embedding_model=embedding_model,
+        umap_model=umap_model,
+        hdbscan_model=hdbscan_model,
+        vectorizer_model=vectorizer_model,
+        ctfidf_model=ctfidf_model,
+    )
+
+    topic_model.fit(docs, embeddings)
+    logger.info("BERTopic model training completed.")
+    
+    return topic_model
+
+
 @flow(name="BerTopic Training")
-def train_bertopic(app_id: str):
+def train_bertopic(
+    app_id: str,
+    umap_params: dict,
+    hdbscan_params: dict,
+    vectorizer_params: dict,
+):
     
     # Step 1 - Load embeddings
     docs, embeddings = load_embeddings(app_id, StorageType.PARQUET)
 
-    # Step 2 - Reduce dimensionality
-    umap_model = UMAP(n_neighbors=15, n_components=5, min_dist=0.0, metric='cosine')
-
-    # Step 3 - Cluster reduced embeddings
-    hdbscan_model = HDBSCAN(min_cluster_size=15, metric='euclidean', cluster_selection_method='eom', prediction_data=True)
-
-    # Step 4 - Tokenize topics
-    vectorizer_model = CountVectorizer(stop_words="english")
-
-    # Step 5 - Create topic representation
-    ctfidf_model = ClassTfidfTransformer()
-
-    # Step 6 - (Optional) Fine-tune topic representations with
-    # a `bertopic.representation` model
-    representation_model = KeyBERTInspired()
-
-    # All steps together
-    topic_model = BERTopic(
-        embedding_model=SentenceTransformer("all-MiniLM-L6-v2"), # Explicitly use the model used for embeddings
-        umap_model=umap_model,                    # Step 2 - Reduce dimensionality
-        hdbscan_model=hdbscan_model,              # Step 3 - Cluster reduced embeddings
-        vectorizer_model=vectorizer_model,        # Step 4 - Tokenize topics
-        ctfidf_model=ctfidf_model,                # Step 5 - Extract topic words
-        # representation_model=representation_model # Step 6 - (Optional) Fine-tune topic representations
+    # Step 2 - Train model
+    topic_model = train_model(
+        docs, 
+        embeddings, 
+        umap_params=umap_params, 
+        hdbscan_params=hdbscan_params, 
+        vectorizer_params=vectorizer_params
     )
     
-    topic_model.fit(docs, embeddings)
-    
+    # Step 3 - Save model
     save_model(topic_model, app_id)
 
 if __name__ == "__main__":
-    train_bertopic(app_id="2393760")
+    umap_params = {
+        "n_neighbors": 15,
+        "n_components": 5,
+        "min_dist": 0.0,
+        "metric": "cosine",
+    }
+    hdbscan_params = {
+        "min_cluster_size": 7,
+        "metric": "euclidean",
+        "cluster_selection_method": "eom",
+        "prediction_data": True,
+    }
+    vectorizer_params = {"stop_words": "english"}
+    train_bertopic(
+        app_id="2393760",
+        umap_params=umap_params,
+        hdbscan_params=hdbscan_params,
+        vectorizer_params=vectorizer_params
+        )

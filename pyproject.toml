@@ -8,6 +8,7 @@ dependencies = [
     "bertopic[vision]>=0.17.4",
     "hdbscan>=0.8.41",
     "httpx>=0.28.1",
+    "matplotlib>=3.10.8",
     "nltk>=3.9.2",
     "polars>=1.37.1",
     "prefect>=3.6.10",
