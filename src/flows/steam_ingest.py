@@ -1,12 +1,15 @@
 import asyncio
 from prefect import flow, task
+from prefect.assets import materialize
+from prefect.artifacts import create_markdown_artifact
 from prefect.logging import get_run_logger
 import httpx
 from datetime import datetime, timedelta
 
 from voc.storage.factory import get_storage
 from voc.storage.types import StorageType
-from voc.ingestion.providers.steam import SteamReviewProvider, SteamReview
+from voc.ingestion.providers.steam import SteamReviewProvider
+from voc.data_models import SteamReview
 
 
 @task(log_prints=True)
@@ -18,19 +21,29 @@ async def fetch_steam_reviews(app_id: str, since: datetime | None = None):
     return review_list
 
 
-@task(log_prints=True)
-def save_reviews(reviews: list[SteamReview], app_id: str, storage_type: StorageType):
+# Default URI required by decorator; overridden at runtime with specific app_id
+@materialize("postgres://bronze/reviews/default", log_prints=True)
+def save_bronze_data(reviews: list[SteamReview], app_id: str, storage_type: StorageType, storage_config: dict):
     logger = get_run_logger()
-    storage = get_storage(storage_type, app_id)
+    storage = get_storage(storage_type, config=storage_config)
+    
     storage.save_reviews(reviews)
-    logger.info(f"Saved {len(reviews)} reviews for app {app_id}")
+    msg = f"Saved {len(reviews)} reviews for app {app_id}"
+    logger.info(msg)
+    
+    create_markdown_artifact(
+        key="bronze-ingest-report",
+        markdown=f"## Ingestion Report\n\n{msg}\n- **Storage:** {storage_type}\n- **App ID:** {app_id}",
+        description=f"Ingestion report for {app_id}"
+    )
 
 
 @flow(name="Steam Reviews Ingest (Bronze)")
 async def ingest_steam_reviews(
     app_id: str,
     storage_type: StorageType,
-    lookback_days: int | None = None
+    lookback_days: int | None = None,
+    storage_config: dict = {}
 ):
     if lookback_days:
         since = datetime.now() - timedelta(days=lookback_days)
@@ -38,8 +51,12 @@ async def ingest_steam_reviews(
         since = None
     
     reviews = await fetch_steam_reviews(app_id, since)
-    save_reviews(reviews, app_id, storage_type)
+    
+    # Dynamic asset key based on storage type
+    asset_key = f"{storage_type}://reviews/{app_id}"
+    save_task = save_bronze_data.with_options(assets=[asset_key])
+    save_task(reviews, app_id, storage_type, storage_config)
 
 
 if __name__ == "__main__":
-    asyncio.run(ingest_steam_reviews(app_id = "2393760", storage_type = StorageType.PARQUET))
+    asyncio.run(ingest_steam_reviews(app_id="2393760", storage_type=StorageType.POSTGRES, storage_config={}))

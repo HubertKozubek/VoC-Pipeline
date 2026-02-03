@@ -9,32 +9,7 @@ logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel
 
-class SteamAuthor(BaseModel):
-    steamid: str
-    num_games_owned: int
-    num_reviews: int
-    playtime_forever: int
-    playtime_last_two_weeks: int
-    playtime_at_review: int
-    last_played: int
-
-class SteamReview(BaseModel):
-    recommendationid: str
-    author: SteamAuthor
-    language: str
-    review: str
-    timestamp_created: int
-    timestamp_updated: int
-    voted_up: bool
-    votes_up: int
-    votes_funny: int
-    weighted_vote_score: float
-    comment_count: int
-    steam_purchase: bool
-    received_for_free: bool
-    written_during_early_access: bool
-    primarily_steam_deck: bool
-    app_id: str
+from voc.data_models import SteamReview
 
 class SteamReviewProvider(BaseReviewProvider):
     BASE_URL = "https://store.steampowered.com/appreviews/{appid}"

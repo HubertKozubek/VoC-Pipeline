@@ -1,5 +1,7 @@
 import asyncio
 from prefect import flow, task
+from prefect.assets import materialize
+from prefect.artifacts import create_markdown_artifact
 from prefect.logging import get_run_logger
 from nltk.tokenize import sent_tokenize
 from sentence_transformers import SentenceTransformer
@@ -9,41 +11,47 @@ import pandas as pd
 
 from voc.storage.factory import get_storage
 from voc.storage.types import StorageType
+from voc.data_models import SteamReview, SentenceDTO
 
 
 @task(log_prints=True)
-def load_raw_reviews(app_id: str, storage_type: StorageType) -> list[dict]:
+def load_raw_reviews(app_id: str, storage_type: StorageType, storage_config: dict) -> list[SteamReview]:
     logger = get_run_logger()
-    storage = get_storage(storage_type, app_id)
-    reviews = storage.load()
+    storage = get_storage(storage_type, config=storage_config)
+    reviews = storage.get_reviews(app_id)
     logger.info(f"Loaded {len(reviews)} raw reviews for app {app_id}")
     return reviews
 
 
 @task(log_prints=True)
-def split_reviews(reviews: list[dict], app_id: str):
+def split_reviews(reviews: list[SteamReview], app_id: str) -> list[SentenceDTO]:
     logger = get_run_logger()
     sentences = []
     
     for review in reviews:
-        rid = review.get("recommendationid")
-        text = review.get("review", "")
+        rid = review.recommendationid
+        text = review.review
         
         if not text:
             continue
             
         for sent in sent_tokenize(text):
-            sentences.append({
-                "recommendationid": rid,
-                "sentence": sent
-            })
+            # Create SentenceDTO
+            dto = SentenceDTO(
+                recommendationid=rid,
+                sentence=sent,
+                review=text,
+                review_id=rid, # Map recommendationid to review_id
+                app_id=app_id  # explicit app_id context
+            )
+            sentences.append(dto)
     
     logger.info(f"Split {len(sentences)} sentences for app {app_id}")
     return sentences
 
 
 @task(log_prints=True)
-def calculate_sentiment(sentences: list[dict], app_id: str):
+def calculate_sentiment(sentences: list[SentenceDTO], app_id: str) -> list[SentenceDTO]:
     logger = get_run_logger()
     
     device = 0 if torch.cuda.is_available() else -1
@@ -52,7 +60,7 @@ def calculate_sentiment(sentences: list[dict], app_id: str):
     model_path = "cardiffnlp/twitter-roberta-base-sentiment-latest"
     sentiment_pipeline = pipeline("sentiment-analysis", model=model_path, tokenizer=model_path, device=device)
 
-    docs = [item["sentence"] for item in sentences]
+    docs = [item.sentence for item in sentences]
     logger.info(f"Calculating sentiment for {len(docs)} sentences...")
 
     # Batch processing
@@ -65,65 +73,75 @@ def calculate_sentiment(sentences: list[dict], app_id: str):
         if 'positive' in l: return 'POSITIVE'
         return label
 
-    results = []
+    # Update objects in place (or create new list if preferring immutability, but in-place is fine for DTOs here)
     for item, s in zip(sentences, sentiments):
-        new_item = item.copy()
-        new_item['sentiment'] = map_label(s['label'])
-        new_item['score'] = s['score']
-        results.append(new_item)
+        item.sentiment = map_label(s['label'])
+        item.score = s['score']
     
     try:
-        df = pd.DataFrame(results)
+        # For logging mostly
+        data_dicts = [{"sentiment": s.sentiment} for s in sentences]
+        df = pd.DataFrame(data_dicts)
         if not df.empty:
             logger.info(f"Sentiment distribution:\n{df['sentiment'].value_counts()}")
     except ImportError:
         pass
 
     logger.info(f"Calculated sentiment for {len(sentences)} sentences")
-    return results
+    return sentences
 
 
 @task(log_prints=True)
-def calculate_embeddings(sentences: list[dict], app_id: str):
+def calculate_embeddings(sentences: list[SentenceDTO], app_id: str) -> list[SentenceDTO]:
     logger = get_run_logger()
     embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
     
-    texts = [item["sentence"] for item in sentences]
+    texts = [item.sentence for item in sentences]
     
     embeddings = embedding_model.encode(texts, show_progress_bar=True)
     
-    results = []
     for item, embedding in zip(sentences, embeddings):
-        res = item.copy()
-        res["embedding"] = embedding.tolist()
-        results.append(res)
+        item.embedding = embedding.tolist()
         
     logger.info(f"Calculated embeddings for {len(sentences)} sentences for app {app_id}")
-    return results
+    return sentences
 
 
-@task(log_prints=True)
-def save_dataset(data: list[dict], app_id: str, storage_type: StorageType, base_path: str, dataset_name: str):
+# Default URI required by decorator; overridden at runtime with specific app_id
+@materialize("postgres://silver/sentences/default", log_prints=True)
+def save_processed_data(data: list[SentenceDTO], app_id: str, storage_type: StorageType, storage_config: dict):
     logger = get_run_logger()
-    storage = get_storage(storage_type, app_id, base_path=base_path)
-    storage.save(data, dataset_name=dataset_name)
-    logger.info(f"Saved {len(data)} records to {base_path}/{dataset_name}")
+    storage = get_storage(storage_type, config=storage_config)
+    storage.save_sentences(data)
+    msg = f"Saved {len(data)} processed sentences for app {app_id}"
+    logger.info(msg)
+    
+    create_markdown_artifact(
+        key="silver-process-report",
+        markdown=f"## Process Report\n\n{msg}\n- **Storage:** {storage_type}\n- **App ID:** {app_id}",
+        description=f"Process report for {app_id}"
+    )
 
 
 @flow(name="Steam Reviews Process (Silver)")
-def process_steam_reviews(app_id: str, base_path: str, storage_type: StorageType):
-    reviews = load_raw_reviews(app_id, storage_type)
+def process_steam_reviews(
+    app_id: str = "2393760",
+    storage_type: StorageType = StorageType.POSTGRES,
+    storage_config: dict = {}
+):
+    reviews = load_raw_reviews(app_id, storage_type, storage_config)
     if not reviews:
         return
         
     sentences = split_reviews(reviews, app_id)
-    save_dataset(sentences, app_id, storage_type, base_path, "sentences")
-    
     sentences_sentiment = calculate_sentiment(sentences, app_id)
-    
     sentences_embeddings = calculate_embeddings(sentences_sentiment, app_id)
-    save_dataset(sentences_embeddings, app_id, storage_type, base_path, "embeddings")
+    
+    # Dynamic asset key based on storage type
+    asset_key = f"{storage_type}://sentences/{app_id}"
+    save_task = save_processed_data.with_options(assets=[asset_key])
+    save_task(sentences_embeddings, app_id, storage_type, storage_config)
 
 
 if __name__ == "__main__":
-    process_steam_reviews(app_id="2393760", storage_type=StorageType.PARQUET, base_path = "data/silver")
+    process_steam_reviews(app_id="2393760", storage_type=StorageType.POSTGRES, storage_config={})

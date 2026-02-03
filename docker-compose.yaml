@@ -5,3 +5,18 @@ services:
       - "4200:4200"
     command: [ "prefect", "server", "start", "--host", "0.0.0.0" ]
     restart: always
+
+  database:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=voc
+      - POSTGRES_PASSWORD=voc
+      - POSTGRES_DB=voc
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+volumes:
+  postgres_data:
