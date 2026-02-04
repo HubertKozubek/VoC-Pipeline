@@ -14,7 +14,9 @@ from voc.storage.types import StorageType
 from voc.data_models import SteamReview, SentenceDTO
 
 
-@task(log_prints=True)
+@materialize(
+    asset_deps="postgres://bronze/reviews"
+)
 def load_raw_reviews(app_id: str, storage_type: StorageType, storage_config: dict) -> list[SteamReview]:
     logger = get_run_logger()
     storage = get_storage(storage_type, config=storage_config)
@@ -41,8 +43,7 @@ def split_reviews(reviews: list[SteamReview], app_id: str) -> list[SentenceDTO]:
                 recommendationid=rid,
                 sentence=sent,
                 review=text,
-                review_id=rid, # Map recommendationid to review_id
-                app_id=app_id  # explicit app_id context
+                app_id=app_id
             )
             sentences.append(dto)
     
@@ -63,7 +64,6 @@ def calculate_sentiment(sentences: list[SentenceDTO], app_id: str) -> list[Sente
     docs = [item.sentence for item in sentences]
     logger.info(f"Calculating sentiment for {len(docs)} sentences...")
 
-    # Batch processing
     sentiments = sentiment_pipeline(docs, batch_size=32, truncation=True)
 
     def map_label(label):
@@ -73,7 +73,6 @@ def calculate_sentiment(sentences: list[SentenceDTO], app_id: str) -> list[Sente
         if 'positive' in l: return 'POSITIVE'
         return label
 
-    # Update objects in place (or create new list if preferring immutability, but in-place is fine for DTOs here)
     for item, s in zip(sentences, sentiments):
         item.sentiment = map_label(s['label'])
         item.score = s['score']
@@ -107,8 +106,7 @@ def calculate_embeddings(sentences: list[SentenceDTO], app_id: str) -> list[Sent
     return sentences
 
 
-# Default URI required by decorator; overridden at runtime with specific app_id
-@materialize("postgres://silver/sentences/default", log_prints=True)
+@materialize("postgres://silver/sentences", log_prints=True)
 def save_processed_data(data: list[SentenceDTO], app_id: str, storage_type: StorageType, storage_config: dict):
     logger = get_run_logger()
     storage = get_storage(storage_type, config=storage_config)
@@ -138,7 +136,7 @@ def process_steam_reviews(
     sentences_embeddings = calculate_embeddings(sentences_sentiment, app_id)
     
     # Dynamic asset key based on storage type
-    asset_key = f"{storage_type}://sentences/{app_id}"
+    asset_key = f"{storage_type}://silver/sentences"
     save_task = save_processed_data.with_options(assets=[asset_key])
     save_task(sentences_embeddings, app_id, storage_type, storage_config)
 

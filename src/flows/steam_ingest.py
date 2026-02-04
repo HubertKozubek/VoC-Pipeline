@@ -21,8 +21,7 @@ async def fetch_steam_reviews(app_id: str, since: datetime | None = None):
     return review_list
 
 
-# Default URI required by decorator; overridden at runtime with specific app_id
-@materialize("postgres://bronze/reviews/default", log_prints=True)
+@materialize("postgres://bronze/reviews", log_prints=True)
 def save_bronze_data(reviews: list[SteamReview], app_id: str, storage_type: StorageType, storage_config: dict):
     logger = get_run_logger()
     storage = get_storage(storage_type, config=storage_config)
@@ -53,7 +52,7 @@ async def ingest_steam_reviews(
     reviews = await fetch_steam_reviews(app_id, since)
     
     # Dynamic asset key based on storage type
-    asset_key = f"{storage_type}://reviews/{app_id}"
+    asset_key = f"{storage_type}://bronze/reviews"
     save_task = save_bronze_data.with_options(assets=[asset_key])
     save_task(reviews, app_id, storage_type, storage_config)
 
