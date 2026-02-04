@@ -2,6 +2,7 @@ from datetime import datetime
 import numpy as np
 from pathlib import Path
 from prefect import flow, task, get_run_logger
+from prefect.assets import materialize
 from umap import UMAP
 from hdbscan import HDBSCAN
 from sentence_transformers import SentenceTransformer
@@ -13,29 +14,26 @@ from bertopic.vectorizers import ClassTfidfTransformer
 
 from voc.storage.factory import get_storage
 from voc.storage.types import StorageType
+from voc.data_models import SentenceDTO
 
 
 @task
-def load_embeddings(app_id: str, storage_type: StorageType):
+def load_sentences(app_id: str, storage_type: StorageType, storage_config: dict) -> list[SentenceDTO]:
     logger = get_run_logger()
-    logger.info(f"Loading embeddings for app {app_id}")
+    logger.info(f"Loading sentences for app {app_id} from {storage_type}")
     
-    storage = get_storage(storage_type, app_id, base_path="data/embeddings")
+    storage = get_storage(storage_type, config=storage_config)
     
-    data = storage.load()
-    if not data:
-        raise ValueError(f"No embeddings found for app {app_id} in data/embeddings")
+    sentences = storage.get_sentences(app_id)
+    if not sentences:
+        raise ValueError(f"No sentences found for app {app_id}")
         
-    logger.info(f"Loaded {len(data)} embedding records")
-    
-    docs = [item["sentence"] for item in data]
+    logger.info(f"Loaded {len(sentences)} sentence records")
+    return sentences
 
-    embeddings = np.array([item["embedding"] for item in data])
-    
-    return docs, embeddings
-
-
-@task
+@materialize(
+    "model://bertopic"
+)
 def save_model(topic_model: BERTopic, app_id: str):
     logger = get_run_logger()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -50,14 +48,22 @@ def save_model(topic_model: BERTopic, app_id: str):
 
 @task
 def train_model(
-    docs: list[str],
-    embeddings: np.ndarray,
+    sentences: list[SentenceDTO],
     umap_params: dict,
     hdbscan_params: dict,
     vectorizer_params: dict,
 ) -> BERTopic:
     logger = get_run_logger()
     logger.info("Initializing and training BERTopic model...")
+
+    docs = [s.sentence for s in sentences]
+    # Check if we have embeddings
+    embeddings = None
+    if sentences and sentences[0].embedding:
+         embeddings = np.array([s.embedding for s in sentences])
+         logger.info(f"Using pre-calculated embeddings with shape {embeddings.shape}")
+    else:
+        logger.info("No pre-calculated embeddings found. BERTopic will calculate them.")
 
     umap_model = UMAP(**umap_params)
     hdbscan_model = HDBSCAN(**hdbscan_params)
@@ -86,15 +92,16 @@ def train_bertopic(
     umap_params: dict,
     hdbscan_params: dict,
     vectorizer_params: dict,
+    storage_type: StorageType,
+    storage_config: dict = {}
 ):
     
-    # Step 1 - Load embeddings
-    docs, embeddings = load_embeddings(app_id, StorageType.PARQUET)
+    # Step 1 - Load sentences
+    sentences = load_sentences(app_id, storage_type, storage_config)
 
     # Step 2 - Train model
     topic_model = train_model(
-        docs, 
-        embeddings, 
+        sentences,
         umap_params=umap_params, 
         hdbscan_params=hdbscan_params, 
         vectorizer_params=vectorizer_params
@@ -121,5 +128,6 @@ if __name__ == "__main__":
         app_id="2393760",
         umap_params=umap_params,
         hdbscan_params=hdbscan_params,
-        vectorizer_params=vectorizer_params
+        vectorizer_params=vectorizer_params,
+        storage_type=StorageType.POSTGRES,
         )
