@@ -14,9 +14,7 @@ from voc.storage.types import StorageType
 from voc.data_models import SteamReview, SentenceDTO
 
 
-@materialize(
-    asset_deps="postgres://bronze/reviews"
-)
+@task(log_prints=True)
 def load_raw_reviews(app_id: str, storage_type: StorageType, storage_config: dict) -> list[SteamReview]:
     logger = get_run_logger()
     storage = get_storage(storage_type, config=storage_config)
