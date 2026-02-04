@@ -140,4 +140,8 @@ def process_steam_reviews(
 
 
 if __name__ == "__main__":
-    process_steam_reviews(app_id="2393760", storage_type=StorageType.POSTGRES, storage_config={})
+    # "Tall Trails" for tests, small dataset ~ 500 reviews
+    # process_steam_reviews(app_id="2393760", storage_type=StorageType.POSTGRES, storage_config={})
+    
+    # Hollow Knight: Silksong
+    process_steam_reviews(app_id="1030300", storage_type=StorageType.POSTGRES, storage_config={})
