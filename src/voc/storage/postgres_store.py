@@ -39,17 +39,21 @@ class PostgresStore(VocStorage):
             if not values:
                 return
 
-            stmt = insert(Review).values(values)
+            batch_size = 1000
+            for i in range(0, len(values), batch_size):
+                batch = values[i : i + batch_size]
+                stmt = insert(Review).values(batch)
+                
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=[Review.recommendationid],
+                    set_={
+                        "raw_data": stmt.excluded.raw_data,
+                        "app_id": stmt.excluded.app_id,
+                        "ingestion_time": stmt.excluded.ingestion_time
+                    }
+                )
+                session.execute(stmt)
             
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[Review.recommendationid],
-                set_={
-                    "raw_data": stmt.excluded.raw_data,
-                    "app_id": stmt.excluded.app_id,
-                    "ingestion_time": stmt.excluded.ingestion_time
-                }
-            )
-            session.execute(stmt)
             session.commit()
             logger.info(f"Saved/Upserted {len(values)} reviews")
         except Exception as e:
@@ -87,7 +91,11 @@ class PostgresStore(VocStorage):
             if not values:
                 return
             
-            session.execute(insert(Sentence), values)
+            batch_size = 1000
+            for i in range(0, len(values), batch_size):
+                batch = values[i : i + batch_size]
+                session.execute(insert(Sentence), batch)
+                
             session.commit()
             logger.info(f"Saved {len(values)} sentences")
         except Exception as e:
