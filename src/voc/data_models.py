@@ -24,7 +24,6 @@ class SteamReview(BaseModel):
 class SentenceDTO(BaseModel):
     recommendationid: str
     sentence: str
-    review_id: str
     app_id: str
     sentiment: Optional[str] = None
     score: Optional[float] = None
