@@ -79,6 +79,26 @@ class PostgresStore(VocStorage):
         finally:
             session.close()
 
+    def get_reviews_batch(self, app_id: str, limit: int = 100, offset: int = 0) -> List[SteamReview]:
+        """
+        Retrieve a batch of reviews for a specific app_id with pagination.
+        """
+        session = self.Session()
+        try:
+            reviews = session.query(Review).filter(Review.app_id == app_id).order_by(Review.ingestion_time).limit(limit).offset(offset).all()
+            results = []
+            for r in reviews:
+                d = r.raw_data if r.raw_data else {}
+                try:
+                    r_obj = SteamReview(**d)
+                    # Create dto or use original object
+                    results.append(r_obj)
+                except Exception as e:
+                    logger.warning(f"Failed to parse review {r.recommendationid}: {e}")
+            return results
+        finally:
+            session.close()
+
     def save_sentences(self, sentences: List[SentenceDTO]):
         if not sentences:
             return
